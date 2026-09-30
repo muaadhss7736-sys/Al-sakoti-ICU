@@ -16,7 +16,7 @@ jobs:
         run: |
           mkdir -p www
           curl -fL https://effervescent-alpaca-702c1b.netlify.app/ -o www/index.html
-          grep -q "Lab results" www/index.html || (echo "Netlify site is not the latest version" && exit 1)
+          grep -q "Insulin infusion in critical ill patient" www/index.html || (echo "Netlify site is not the latest version" && exit 1)
       - run: npm install
       - run: npx cap add android
       - name: Set custom icon
