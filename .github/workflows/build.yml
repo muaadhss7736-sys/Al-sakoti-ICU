@@ -15,7 +15,8 @@ jobs:
       - name: Prepare web files
         run: |
           mkdir -p www
-          cp index.html www/index.html
+          curl -fL https://effervescent-alpaca-702c1b.netlify.app/ -o www/index.html
+          grep -q "Lab results" www/index.html || (echo "Netlify site is not the latest version" && exit 1)
       - run: npm install
       - run: npx cap add android
       - name: Set custom icon
