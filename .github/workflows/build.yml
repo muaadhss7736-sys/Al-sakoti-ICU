@@ -26,9 +26,7 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # =========================
-      # 1. Download latest app
-      # =========================
+      # Download the latest web version
       - name: Prepare web files
         run: |
           rm -rf www
@@ -47,9 +45,7 @@ jobs:
 
           echo "Web app downloaded successfully."
 
-      # =========================
-      # 2. Fixed Capacitor identity
-      # =========================
+      # Create Capacitor configuration
       - name: Create Capacitor config
         run: |
           cat > capacitor.config.json <<'EOF'
@@ -62,36 +58,37 @@ jobs:
 
           cat capacitor.config.json
 
-      # =========================
-      # 3. Install
-      # =========================
+      # Install Capacitor
       - name: Install dependencies
-        run: npm install
-
-      # =========================
-      # 4. Create Android project
-      # =========================
-      - name: Add Android
-        run: npx cap add android
-
-      # =========================
-      # 5. Verify MainActivity
-      # =========================
-      - name: Verify MainActivity
         run: |
-          echo "MainActivity files:"
-          find android/app/src/main \
-            -type f \
-            \( -name "MainActivity.java" -o -name "MainActivity.kt" \) \
-            -print
+          npm install
 
-          echo ""
-          echo "Android Manifest:"
-          cat android/app/src/main/AndroidManifest.xml
+      # Create Android project
+      - name: Add Android
+        run: |
+          npx cap add android
 
-      # =========================
-      # 6. Force correct Application ID
-      # =========================
+      # Keep YOUR ORIGINAL ICON
+      - name: Set original AL-SAKOTI icon
+        run: |
+          test -f icon-192.png || {
+            echo "ERROR: icon-192.png not found."
+            exit 1
+          }
+
+          echo "Using the original uploaded icon: icon-192.png"
+
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p android/app/src/main/res/mipmap-$d
+
+            cp icon-192.png \
+              android/app/src/main/res/mipmap-$d/ic_launcher.png
+
+            cp icon-192.png \
+              android/app/src/main/res/mipmap-$d/ic_launcher_round.png
+          done
+
+      # Make sure Android uses the correct package
       - name: Fix Android Application ID
         run: |
           python3 - <<'PY'
@@ -112,65 +109,46 @@ jobs:
           with open(p, "w") as f:
               f.write(s)
 
-          print("Application ID fixed:")
-          print("com.alsakoti.micu")
+          print("Application ID = com.alsakoti.micu")
           PY
 
-      # =========================
-      # 7. Set icon
-      # =========================
-      - name: Set application icon
-        run: |
-          test -f icon-192.png || {
-            echo "ERROR: icon-192.png not found."
-            exit 1
-          }
-
-          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            mkdir -p android/app/src/main/res/mipmap-$d
-
-            cp icon-192.png \
-              android/app/src/main/res/mipmap-$d/ic_launcher.png
-
-            cp icon-192.png \
-              android/app/src/main/res/mipmap-$d/ic_launcher_round.png
-          done
-
-      # =========================
-      # 8. Sync Capacitor
-      # =========================
+      # Sync Capacitor
       - name: Sync Capacitor
         run: |
           npx cap sync android
 
-      # =========================
-      # 9. Verify launcher
-      # =========================
-      - name: Verify launcher configuration
+      # Verify launcher before building
+      - name: Verify Android launcher
         run: |
-          echo "Application ID:"
-          grep -n "applicationId" android/app/build.gradle
+          echo "=============================="
+          echo "APPLICATION ID"
+          echo "=============================="
+          grep -n "applicationId" android/app/build.gradle || true
 
           echo ""
-          echo "MainActivity:"
+          echo "=============================="
+          echo "MAIN ACTIVITY"
+          echo "=============================="
           find android/app/src/main \
             -type f \
             \( -name "MainActivity.java" -o -name "MainActivity.kt" \) \
             -print
 
           echo ""
-          echo "Launcher entries:"
+          echo "=============================="
+          echo "LAUNCHER"
+          echo "=============================="
           grep -R -n \
             -E "android.intent.action.MAIN|android.intent.category.LAUNCHER" \
             android/app/src/main/AndroidManifest.xml || true
 
           echo ""
-          echo "Manifest:"
+          echo "=============================="
+          echo "MANIFEST"
+          echo "=============================="
           cat android/app/src/main/AndroidManifest.xml
 
-      # =========================
-      # 10. Build APK
-      # =========================
+      # Build APK
       - name: Build APK
         run: |
           cd android
@@ -178,9 +156,7 @@ jobs:
           ./gradlew clean
           ./gradlew assembleDebug
 
-      # =========================
-      # 11. Verify APK exists
-      # =========================
+      # Verify APK
       - name: Verify APK
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
@@ -191,12 +167,13 @@ jobs:
             exit 1
           fi
 
-          echo "APK successfully created:"
+          echo "=============================="
+          echo "APK CREATED SUCCESSFULLY"
+          echo "=============================="
+
           ls -lh "$APK"
 
-      # =========================
-      # 12. Upload
-      # =========================
+      # Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
