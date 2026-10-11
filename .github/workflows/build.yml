@@ -1,181 +1,81 @@
-name: Build AL-SAKOTI ICU APK
-
-on:
-  workflow_dispatch:
-
+name: Build APK
+on: workflow_dispatch
 permissions:
-  contents: read
-
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
-
-      # Download the latest web version
       - name: Prepare web files
         run: |
-          rm -rf www
           mkdir -p www
-
-          curl -fL \
-            https://effervescent-alpaca-702c1b.netlify.app/ \
-            -o www/index.html
-
-          test -s www/index.html
-
-          grep -q "A. PATIENT DATA" www/index.html || {
-            echo "ERROR: Wrong or old Netlify version."
-            exit 1
-          }
-
-          echo "Web app downloaded successfully."
-
-      # Create Capacitor configuration
-      - name: Create Capacitor config
+          curl -fL https://effervescent-alpaca-702c1b.netlify.app/ -o www/index.html
+          grep -q "function focEnd" www/index.html || (echo "Netlify site is not the latest version" && exit 1)
+      - name: Prepare signing key
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          cat > capacitor.config.json <<'EOF'
-          {
-            "appId": "com.alsakoti.micu",
-            "appName": "AL-SAKOTI ICU",
-            "webDir": "www"
-          }
-          EOF
-
-          cat capacitor.config.json
-
-      # Install Capacitor
-      - name: Install dependencies
+          if [ -z "$KS_PASS" ]; then echo "Add the KEYSTORE_PASSWORD secret first"; exit 1; fi
+          mkdir -p signing
+          if [ ! -f signing/release.keystore ]; then
+            keytool -genkeypair -keystore signing/release.keystore -storetype PKCS12 -alias micu -keyalg RSA -keysize 2048 -validity 10000 -storepass "$KS_PASS" -keypass "$KS_PASS" -dname "CN=Al-sakoti ICU, O=Al-sakoti, C=YE"
+            echo "NEWKEY=true" >> "$GITHUB_ENV"
+          fi
+      - name: Save signing key (first run only)
+        if: env.NEWKEY == 'true'
         run: |
-          npm install
-
-      # Create Android project
-      - name: Add Android
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add signing/release.keystore
+          git commit -m "Add signing key"
+          git push
+      - run: npm install
+      - run: npx cap add android
+      - name: Set custom icon
         run: |
-          npx cap add android
-
-      # Keep YOUR ORIGINAL ICON
-      - name: Set original AL-SAKOTI icon
-        run: |
-          test -f icon-192.png || {
-            echo "ERROR: icon-192.png not found."
-            exit 1
-          }
-
-          echo "Using the original uploaded icon: icon-192.png"
-
+          rm -rf android/app/src/main/res/mipmap-anydpi-v26
           for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            mkdir -p android/app/src/main/res/mipmap-$d
-
-            cp icon-192.png \
-              android/app/src/main/res/mipmap-$d/ic_launcher.png
-
-            cp icon-192.png \
-              android/app/src/main/res/mipmap-$d/ic_launcher_round.png
+            for n in ic_launcher ic_launcher_round ic_launcher_foreground; do
+              cp icon-192.png android/app/src/main/res/mipmap-$d/$n.png
+            done
           done
-
-      # Make sure Android uses the correct package
-      - name: Fix Android Application ID
+      - name: Apply fixed signing and version
+        env:
+          RUN_NO: ${{ github.run_number }}
         run: |
           python3 - <<'PY'
-          import re
-
-          p = "android/app/build.gradle"
-
-          with open(p, "r") as f:
-              s = f.read()
-
-          s = re.sub(
-              r'applicationId\s+"[^"]+"',
-              'applicationId "com.alsakoti.micu"',
-              s,
-              count=1
-          )
-
-          with open(p, "w") as f:
-              f.write(s)
-
-          print("Application ID = com.alsakoti.micu")
+          import os,re
+          p="android/app/build.gradle"
+          s=open(p).read()
+          cfg='android {\n    signingConfigs {\n        debug {\n            storeFile file(System.getenv("KS_FILE"))\n            storePassword System.getenv("KS_PASS")\n            keyAlias "micu"\n            keyPassword System.getenv("KS_PASS")\n        }\n    }'
+          assert "android {" in s
+          s=s.replace("android {",cfg,1)
+          s=re.sub(r"versionCode\s+\d+","versionCode "+os.environ["RUN_NO"],s,count=1)
+          open(p,"w").write(s)
+          print("build.gradle patched")
           PY
-
-      # Sync Capacitor
-      - name: Sync Capacitor
-        run: |
-          npx cap sync android
-
-      # Verify launcher before building
-      - name: Verify Android launcher
-        run: |
-          echo "=============================="
-          echo "APPLICATION ID"
-          echo "=============================="
-          grep -n "applicationId" android/app/build.gradle || true
-
-          echo ""
-          echo "=============================="
-          echo "MAIN ACTIVITY"
-          echo "=============================="
-          find android/app/src/main \
-            -type f \
-            \( -name "MainActivity.java" -o -name "MainActivity.kt" \) \
-            -print
-
-          echo ""
-          echo "=============================="
-          echo "LAUNCHER"
-          echo "=============================="
-          grep -R -n \
-            -E "android.intent.action.MAIN|android.intent.category.LAUNCHER" \
-            android/app/src/main/AndroidManifest.xml || true
-
-          echo ""
-          echo "=============================="
-          echo "MANIFEST"
-          echo "=============================="
-          cat android/app/src/main/AndroidManifest.xml
-
-      # Build APK
-      - name: Build APK
+      - run: npx cap sync android
+      - name: Build debug APK
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KS_FILE: ${{ github.workspace }}/signing/release.keystore
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew clean
           ./gradlew assembleDebug
-
-      # Verify APK
-      - name: Verify APK
+      - name: Show signing certificate
         run: |
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not created."
-            find android/app/build/outputs -type f || true
-            exit 1
-          fi
-
-          echo "=============================="
-          echo "APK CREATED SUCCESSFULLY"
-          echo "=============================="
-
-          ls -lh "$APK"
-
-      # Upload APK
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+          AS=$(ls $ANDROID_HOME/build-tools/*/apksigner | sort -V | tail -1)
+          "$AS" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | head -4 || true
+      - uses: actions/upload-artifact@v4
         with:
-          name: AL-SAKOTI-ICU-APK
+          name: M-ICU-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
